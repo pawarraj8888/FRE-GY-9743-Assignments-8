@@ -23,13 +23,13 @@ on its own segment, so each solve is one-dimensional and leaves the earlier inst
 filled in, all 17 quotes reprice to within 5.3e-10 bp.
 
 \section*{2. The five pieces}
-\textbf{2a, 2b: annuity and par rate} (\code{ValuationEngineProductRfrSwap.calculate\_value}). The fixed leg pays $NK\alpha_i$ on each
+\textbf{2a, 2b: annuity and par rate} (\code{yield\_curve/valuation\_engine.py}, \code{ValuationEngineProductRfrSwap.calculate\_value}). The fixed leg pays $NK\alpha_i$ on each
 remaining coupon date $p_i$, so its PV already calculated by the leg engine is $V_{\mathrm{fix}}=NK\sum_i\alpha_iD(p_i)$ and the annuity
 per unit notional is $A=V_{\mathrm{fix}}/(NK)$; the coupon $K$ is the market quote for calibration instruments and nonzero in every
 use here. The par rate is the coupon that makes the swap worth zero, $R=V_{\mathrm{float}}/(NA)$. For the 9Y6M swap of Section 3,
 $A=7.5863$ and $R=4.8273\%$, so receiving $4.5\%$ is worth $(K-R)\,NA=$ USD -24,829.03, the number the notebook prints.
 
-\textbf{2c: par-rate gradient} (\code{grad\_at\_par}). With $K$ held fixed, $R=V_{\mathrm{float}}/(NA)$ and $NA=V_{\mathrm{fix}}/K$, so
+\textbf{2c: par-rate gradient} (same file, \code{grad\_at\_par}). With $K$ held fixed, $R=V_{\mathrm{float}}/(NA)$ and $NA=V_{\mathrm{fix}}/K$, so
 by the quotient rule
 \[
 \nabla_{X^I}R=\frac{\nabla_{X^I}V_{\mathrm{float}}}{NA}-R\,\frac{\nabla_{X^I}V_{\mathrm{fix}}}{V_{\mathrm{fix}}},
@@ -38,12 +38,12 @@ where $X^I$ is the vector of internal state variables (the node forwards of ever
 order). The two leg engines already know how to accumulate their PV gradients block by block, so the implementation calls each of
 them once with the matching scalar, which keeps the blocks aligned with the state layout.
 
-\textbf{3: calibration Jacobian} (\code{YieldCurve.calculate\_model\_jacobian}). $J=\partial X^M/\partial X^I$ has one row per
+\textbf{3: calibration Jacobian} (\code{yield\_curve/yield\_curve\_model.py}, \code{YieldCurve.calculate\_model\_jacobian}). $J=\partial X^M/\partial X^I$ has one row per
 calibration instrument: the OIS rows are the gradients from 2c, the funding row comes from the zero-spread engine, and each row is the
 flattened block list. Here $J$ is $18\times18$ (17 OIS nodes and one funding node). Its OIS block is lower triangular, because quote
 $i$ only depends on nodes up to its own maturity, with a positive diagonal: raising a swap's last-segment forward raises its par rate.
 
-\textbf{4: quote risk} (\code{risk\_calculation}). The engines give $\nabla_{X^I}V$. The market quotes are a function of the state,
+\textbf{4: quote risk} (\code{valuation/utilities.py}, \code{risk\_calculation}). The engines give $\nabla_{X^I}V$. The market quotes are a function of the state,
 $X^M=F(X^I)$ with $J=\partial F/\partial X^I$ invertible, so a move $dX^M$ in quotes is produced by $dX^I=J^{-1}dX^M$ and the chain rule
 gives
 \[
@@ -70,13 +70,13 @@ OIS & Quote (bp) & Target risk (USD/bp) & Par OIS own-quote risk (USD/bp) & Hedg
 8Y & 479.203 & 3.531 & -660.73 & 5,345 \\
 9Y & 481.600 & -355.339 & -726.42 & -489,162 \\
 10Y & 484.300 & -401.432 & -789.18 & -508,671 \\
-12Y & 489.725 & 0.000 & -905.49 & -0 \\
-15Y & 496.507 & 0.000 & -1,057.51 & -0 \\
-20Y & 501.255 & 0.000 & -1,264.03 & -0 \\
-25Y & 498.939 & 0.000 & -1,425.45 & -0 \\
-30Y & 493.568 & 0.000 & -1,554.29 & -0 \\
-40Y & 480.540 & 0.000 & -1,747.51 & -0 \\
-50Y & 466.540 & 0.000 & -1,886.18 & -0 \\
+12Y & 489.725 & 0.000 & -905.49 & 0 \\
+15Y & 496.507 & 0.000 & -1,057.51 & 0 \\
+20Y & 501.255 & 0.000 & -1,264.03 & 0 \\
+25Y & 498.939 & 0.000 & -1,425.45 & 0 \\
+30Y & 493.568 & 0.000 & -1,554.29 & 0 \\
+40Y & 480.540 & 0.000 & -1,747.51 & 0 \\
+50Y & 466.540 & 0.000 & -1,886.18 & 0 \\
 \bottomrule\end{tabular}\end{center}
 
 \textbf{Why the risk sits at 9Y and 10Y.} A receive-fixed swap loses when rates rise, so its risk to the quotes is negative, and it
