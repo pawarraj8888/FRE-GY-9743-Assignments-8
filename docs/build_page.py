@@ -40,7 +40,7 @@ def table(headers, rows):
     return f"<table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
 calib_rows = [(t, p.last_date.ISO(), f"{tt:.6f}", f"{100 * fwd:.4f}%", f"{q:.3f}", f"{m:.3f}", f"{m - q:.1e}")
               for t, p, tt, fwd, q, m in zip(TENORS, swaps, sofr.state_data[0], sofr.state_data[1], QUOTES_BP, model_bp)]
-risk_rows = [(t, f"{q / 1e4:.6f}", f"{r:,.6f}", f"{b:,.6f}", f"{wi * NOTIONAL:,.2f}", f"{res:.1e}")
+risk_rows = [(t, f"{q:.3f}", f"{r:,.6f}", f"{b:,.6f}", f"{(0.0 if abs(wi * NOTIONAL) < 0.5 else wi * NOTIONAL):,.2f}", f"{res:.1e}")
              for t, q, r, b, wi, res in zip(TENORS, QUOTES_BP, risk, np.diag(B), w, risk + w @ B)]
 
 page = f"""<!doctype html>
@@ -81,8 +81,8 @@ the report scales by 10<sup>&minus;4</sup> to USD per basis point.</p>
 <p class="note">PV {pv(model, target()):,.2f} USD (annuity {eng.annuity_:.4f}, par rate {100 * eng.par_rate_or_spread_:.4f}%). Risk is USD per +1 bp of each quote, all other quotes fixed and the curve
 recalibrated; the hedge is one receive-fixed par OIS per quote with B<sup>T</sup> w = &minus;r<sup>T</sup> (negative notional = pay fixed).</p>
 <figure>{svg}<figcaption>Quote risk of the target (left) and the hedge notionals (right).</figcaption></figure>
-{table(["OIS", "Quote (decimal)", "Target risk (USD/bp)", "1m par OIS risk to own quote (USD/bp)", "Hedge notional (USD, receive > 0)", "Residual (USD/bp)"], risk_rows)}
-<p>A receive-fixed swap loses when rates rise, so the risk is negative and concentrated in the 9Y and 10Y quotes, whose forward segments carry the swap's last cashflows. Raising an
+{table(["OIS", "Quote (bp)", "Target risk (USD/bp)", "1m par OIS risk to own quote (USD/bp)", "Hedge notional (USD, receive > 0)", "Residual (USD/bp)"], risk_rows)}
+<p>A receive-fixed swap loses when rates rise, so its net risk is negative and concentrated in the 9Y and 10Y quotes, whose forward segments carry the swap's last cashflows. Raising an
 earlier quote lifts the forward on its own segment and lowers the next one (the following swap must still reprice), and a swap that pays both segments sees the two moves cancel to
 first order, which leaves the small positive residuals at 1Y to 8Y; quotes beyond 10Y cannot move the swap at all. The hedge is about one million of pay-fixed split roughly half
 and half between 9Y and 10Y, a few thousand of receive-fixed at the shorter tenors, and nothing beyond 10Y. A par OIS has risk only to its own quote, equal to minus its PV01.</p>
@@ -90,7 +90,7 @@ and half between 9Y and 10Y, a few thousand of receive-fixed at the shorter teno
 <h2>Checks</h2>
 <p class="note">{n_tests} tests in <code>tests/test_ois_calibration_and_risk.py</code>: repricing and zero PV of every calibration swap, node placement, the annuity against the cashflow
 report, the par rate and its invariances, the reference PV, the par-rate gradient and Jacobian rows against finite differences, the quote risk against the shipped reference, the
-explicit inverse and bump-and-recalibrate, signs and locality, a par OIS's own-quote risk as its PV01, the report labels, and the hedge (reference notionals, zero residual, the
+explicit inverse and bump-and-recalibrate (also for forward-starting, 15Y and negative-notional swaps), the funding-spread row, signs and locality, a zero-coupon swap, a par OIS's own-quote risk as its PV01, the report labels, and the hedge (reference notionals, zero residual, the
 9Y/10Y split, a real one basis point move of the hedged book). Source for this page: <code>docs/build_page.py</code>.</p>
 </body></html>
 """

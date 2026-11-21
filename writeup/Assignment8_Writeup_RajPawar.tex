@@ -79,13 +79,16 @@ OIS & Quote (bp) & Target risk (USD/bp) & Par OIS own-quote risk (USD/bp) & Hedg
 50Y & 466.540 & 0.000 & -1,886.18 & 0 \\
 \bottomrule\end{tabular}\end{center}
 
-\textbf{Why the risk sits at 9Y and 10Y.} A receive-fixed swap loses when rates rise, so its risk to the quotes is negative, and it
-is concentrated in the two quotes whose forward segments carry the swap's last cashflows: -355.34 USD/bp at 9Y and -401.43 at 10Y.
+\textbf{Why the risk sits at 9Y and 10Y.} A receive-fixed swap loses when rates rise, so its net risk is negative, and it is
+concentrated in the two quotes whose forward segments carry the swap's last cashflows: -355.34 USD/bp at 9Y and -401.43 at 10Y; the
+earlier quotes carry small positive residuals explained below.
 The bootstrap explains the shape. Raising the 9Y quote by one basis point with every other quote fixed lifts the forward on the
-8Y--9Y segment by 10.8 bp (one year has to carry the whole change of a nine-year average) and, since the 10Y swap must still
+8Y--9Y segment by 10.8 bp (the 9Y par rate is a discount-weighted average of nine yearly forwards, so the last year has to carry
+roughly eleven times the move) and, since the 10Y swap must still
 reprice, lowers the 9Y--10Y segment by 11.3 bp. The 9Y6M swap pays floating on all of the first segment and on half of the
 second, so the two moves do not cancel and the swap loses about $10^6\times(\text{10.8}-\tfrac12\times\text{11.3})\,\text{bp}
-\times 10^{-4}$, discounted, which is the order of the -355.34 printed. Raising the 10Y quote lifts the 9Y--10Y segment by 12.3 bp
+\times 10^{-4}\approx 510$ USD before discounting, the right order for the -355.34 printed (the exact number also carries the change
+in the funding discount factors). Raising the 10Y quote lifts the 9Y--10Y segment by 12.3 bp
 and lowers the 10Y--12Y segment, which the swap never touches, hence -401.43. For a quote inside the swap's life, say 5Y, the
 segment it lifts (5.4 bp on 4Y--5Y) and the segment it lowers (5.7 bp on 5Y--6Y) are both fully paid by the swap, so the two
 effects cancel to first order and only a small positive residual from discounting is left (0.82 USD/bp); the quotes beyond 10Y
@@ -99,13 +102,16 @@ hedge is first order: when I move the 9Y quote by a full basis point and recalib
 hedged book by USD -0.12 (for 10Y: -401.52 and -0.12), the leftover being convexity.
 
 \section*{4. Checks}
-\code{tests/test\_ois\_calibration\_and\_risk.py} has 18 tests: every calibration swap reprices to its quote and has zero PV;
+\code{tests/test\_ois\_calibration\_and\_risk.py} has 20 tests: every calibration swap reprices to its quote and has zero PV;
 nodes at the last payment dates in maturity order; the annuity equals the hand sum of accrual times discount factor from the cashflow
 report; the par rate equals the floating PV over the annuity, prices the swap to zero, and does not depend on direction or notional;
 the reference PV; the par-rate gradient against central differences in the state and against the quotient rule of the two leg
 gradients; the Jacobian's shape, triangular structure and rows against finite differences of the quotes; the quote risk against the
 shipped reference, against the gradient times the explicit inverse, and against bump-and-recalibrate of the 1Y, 8Y, 9Y, 10Y and 12Y
-quotes; signs, locality and the pay/receive mirror; a par OIS's own-quote risk as its PV01 with zero risk elsewhere; the report labels;
+quotes (and, for a forward-starting 2Yx5Y, a 15Y and a negative-notional swap, the gradient and the 2Y, 7Y, 12Y and 15Y risks); the
+funding-spread row of the report, which is the swap's sensitivity to the zero spread between the funding and SOFR curves; signs,
+locality and the pay/receive mirror; a zero-coupon swap's annuity and par rate; a par OIS's own-quote risk as its PV01 with zero risk elsewhere; the report labels;
 and the hedge (reference notionals, zero residual, the 9Y/10Y split, and a real one basis point move of the hedged book). The notebook
-is the professor's, executed top to bottom, and its tables equal the reference outputs he shipped in it.
+is the professor's, executed top to bottom, and its tables equal the reference outputs he shipped in it to the printed precision
+(the $10^{-10}$ bp repricing errors differ in their last digits).
 \end{document}

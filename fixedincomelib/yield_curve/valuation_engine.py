@@ -202,11 +202,18 @@ class ValuationEngineProductRfrSwap(ValuationEngineProduct):
             self.fixed_leg_sign_ * self.fixed_cash_ + self.floating_leg_sign_ * self.float_cash_
         )
         # 2a: the fixed leg pays N * K * alpha_i on each remaining coupon, so its PV divided by
-        # N * K is the annuity sum(alpha_i * D_i) per unit notional (the coupon K is nonzero).
-        self.annuity_ = self.fixed_value_ / (self.fixed_rate_ * self.notional_)
+        # N * K is the annuity sum(alpha_i * D_i) per unit notional.  A zero coupon (no PV to
+        # divide) falls back to the same sum taken directly from the leg engine.
+        if self.fixed_rate_ != 0.0:
+            self.annuity_ = self.fixed_value_ / (self.fixed_rate_ * self.notional_)
+        else:
+            leg = self.fixed_leg_engine_
+            self.annuity_ = sum(a * d for a, d in zip(leg.accruals_, leg.dfs_))
 
-        # 2b: the par rate makes the fixed leg worth the floating leg: R = V_float / (N * A).
-        self.par_rate_or_spread_ = self.float_value_ / (self.notional_ * self.annuity_)
+        # 2b: the par rate makes the fixed leg worth the floating leg: R = V_float / (N * A);
+        # undefined once every coupon has been paid.
+        self.par_rate_or_spread_ = (self.float_value_ / (self.notional_ * self.annuity_)
+                                    if self.annuity_ != 0.0 else float("nan"))
 
     def calculate_first_order_risk(
         self, gradient=None, scaler: float = 1.0, accumulate: bool = False

@@ -156,7 +156,7 @@ class YieldCurve(Model):
                 # per-component blocks flattened in model component order so the columns line
                 # up with the flattened state vector used by risk_calculation.
                 grads.append(np.concatenate(engine.grad_at_par(), axis=0))
-            jacobian_pre[index] = np.vstack(grads)
+            jacobian_pre[index] = grads  # np.concatenate(grads, axis=0)
 
         self.model_jacobian_ = (
             block_diag(*jacobian_pre) if only_state_data else np.concatenate(jacobian_pre, axis=0)

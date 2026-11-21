@@ -19,6 +19,7 @@ from fixedincomelib import (  # noqa: E402
     qfCreateModel, qfCreateModelBuildMethodCollection, qfCreateProductFromDataConvention,
     qfCreateValuationParameters, qfCreateValuationParametersCollection, qfCreateValueReport,
 )
+from fixedincomelib.date import accrued  # noqa: E402
 from fixedincomelib.valuation import ValuationEngineProductRegistry, ValuationRequest  # noqa: E402
 
 VALUE_DATE = "2026-10-09"
@@ -123,6 +124,7 @@ def test_nodes_sit_at_the_last_payment_dates_in_tenor_order():
     assert len(times) == 17 and all(np.diff(times) > 0)
     assert [round(t) for t in times] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 20, 25, 30, 40, 50]
     assert sofr.calibration_product[0].last_date.ISO() == "2027-10-14"   # 1Y OIS pays two business days after 2027-10-12
+    assert np.array_equal(times, [accrued(sofr.value_date, p.last_date) for p in sofr.calibration_product])
 
 
 # ---- 2a, 2b: annuity and par rate ---------------------------------------------------------------
@@ -151,7 +153,8 @@ def test_par_rate_does_not_depend_on_direction_or_notional_and_pv_is_linear():
     r1 = qfCreateValueReport(model, swap("9Y6M", 0.045), params(), "ParRateOrSpread")
     r2 = qfCreateValueReport(model, swap("9Y6M", 0.045, "pay"), params(), "ParRateOrSpread")
     r3 = qfCreateValueReport(model, swap("9Y6M", 0.03, notional=250_000), params(), "ParRateOrSpread")
-    assert_close(r1, r2, 1e-14) and assert_close(r1, r3, 1e-14)
+    assert_close(r1, r2, 1e-14)
+    assert_close(r1, r3, 1e-14)
     assert_close(pv(model, swap("9Y6M", 0.045, "pay")), -pv(model, target()), 1e-9)
     assert_close(pv(model, swap("9Y6M", 0.045, notional=2 * NOTIONAL)), 2 * pv(model, target()), 1e-9)
 
@@ -220,7 +223,7 @@ def test_jacobian_rows_match_finite_differences_of_the_quotes():
     start = int(np.cumsum([0] + model.num_sub_components)[model.retrieve_model_component_index("SOFR-1B")])
     h = 1e-6
     for row, product in ((0, swaps[0]), (9, swaps[9]), (16, swaps[16])):
-        for col in (0, row):
+        for col in sorted({0, row}):
             fd = (par_rate_after_state_bump(product, "SOFR-1B", col, h)
                   - par_rate_after_state_bump(product, "SOFR-1B", col, -h)) / (2 * h)
             assert_close(J[start + row, start + col], fd, 1e-6 * max(1.0, abs(fd)))
@@ -232,7 +235,8 @@ def test_quote_risk_matches_the_reference_and_bump_and_recalibrate():
     product = target()
     ois, spread = quote_risk(model, product)
     assert np.allclose(ois, REFERENCE_RISK, atol=2e-6)
-    assert len(spread) == 1
+    assert len(spread) == 1 and abs(spread[0] - 12.2318) < 1e-3      # the funding-spread row: USD per +1 bp of the zero spread
+    assert_close(quote_risk(model, swap("9Y6M", 0.045, "pay"))[1][0], -spread[0], 1e-9)
     base = pv(model, product)
     for tenor in ("1Y", "8Y", "9Y", "10Y", "12Y"):
         up = pv(build({tenor: 0.5e-4}), product)
@@ -263,6 +267,30 @@ def test_quote_risk_signs_and_locality():
     assert all(v == 0 for v in ois[10:])                          # quotes beyond the 10Y node cannot move the swap
     pay, _ = quote_risk(base_model(), swap("9Y6M", 0.045, "pay"))
     assert np.allclose(pay, -ois, atol=1e-9)
+
+
+def test_gradient_and_quote_risk_hold_for_forward_starting_and_long_swaps():
+    model = base_model()
+    h = 1e-6
+    for tenor, direction, notional in (("2Yx5Y", "receive", NOTIONAL), ("15Y", "pay", NOTIONAL), ("9Y6M", "receive", -NOTIONAL)):
+        product = swap(tenor, 0.045, direction, notional)
+        block = engine(model, product).grad_at_par()[model.retrieve_model_component_index("SOFR-1B")]
+        for position in (1, 6, 9):
+            fd = (par_rate_after_state_bump(product, "SOFR-1B", position, h)
+                  - par_rate_after_state_bump(product, "SOFR-1B", position, -h)) / (2 * h)
+            assert_close(block[position], fd, 1e-6 * max(1.0, abs(fd)))
+        ois, _ = quote_risk(model, product)
+        for probe in ("2Y", "7Y", "12Y", "15Y"):
+            fd = pv(build({probe: 0.5e-4}), product) - pv(build({probe: -0.5e-4}), product)
+            assert_close(ois[TENORS.index(probe)], fd, 2e-3 + 1e-4 * abs(fd))
+
+
+def test_zero_coupon_swap_still_reports_an_annuity_and_par_rate():
+    model = base_model()
+    eng = engine(model, swap("9Y6M", 0.0))
+    reference = engine(model, target())
+    assert_close(eng.annuity_, reference.annuity_, 1e-12)
+    assert_close(eng.par_rate_or_spread_, reference.par_rate_or_spread_, 1e-12)
 
 
 def test_par_swap_own_quote_risk_is_minus_its_annuity_per_bp():
