@@ -1,0 +1,111 @@
+\documentclass[10pt]{article}
+\usepackage[margin=0.7in,top=0.55in,bottom=0.55in]{geometry}
+\usepackage{amsmath,amssymb,booktabs,microtype,xcolor,url}
+\usepackage[colorlinks=true,linkcolor=blue!60!black,urlcolor=blue!60!black,pdftitle={FRE-GY-9743 Assignment 8},pdfauthor={Raj Pawar}]{hyperref}
+\newcommand{\code}[1]{\texttt{#1}}
+\setlength{\parindent}{0pt}\setlength{\parskip}{3pt}\emergencystretch=3em\pagestyle{plain}
+\makeatletter\g@addto@macro\normalsize{\setlength{\abovedisplayskip}{5pt}\setlength{\belowdisplayskip}{5pt}\setlength{\abovedisplayshortskip}{3pt}\setlength{\belowdisplayshortskip}{3pt}}\makeatother
+\makeatletter\renewcommand{\section}{\@startsection{section}{1}{\z@}{8pt plus 2pt}{3pt}{\normalfont\large\bfseries}}\makeatother
+\begin{document}
+{\Large\bfseries FRE-GY-9743 Assignment 8: SOFR OIS Calibration and Hedging Risk}\\[1pt]
+Raj Pawar, NYU Tandon School of Engineering, November 21, 2026.\\
+Code: \href{https://github.com/pawarraj8888/FRE-GY-9743-Assignments-8/tree/Raj_Pawar_Branch}{github.com/pawarraj8888/FRE-GY-9743-Assignments-8}, branch \code{Raj\_Pawar\_Branch}.\\
+Project page: \href{https://pawarraj8888.github.io/FRE-GY-9743-Assignments-8/}{pawarraj8888.github.io/FRE-GY-9743-Assignments-8}.
+\vspace{2pt}\hrule
+
+\section*{1. What the notebook does}
+The workbook gives 17 SOFR OIS par quotes, 1Y to 50Y, on the valuation date 2026-10-09 (447.8 bp at 1Y rising to 501.3 bp at 20Y and
+back to 466.5 bp at 50Y). The SOFR curve is an instantaneous forward rate curve, piecewise constant and left-continuous with flat
+extrapolation, with one node per quote placed at that swap's last payment date; the funding curve is SOFR plus a zero spread with a
+single node held at zero. The library bootstraps: components are built in order, and for each OIS in maturity order the node forward is
+solved with Brent's method so that the swap has zero PV. Because the forward is piecewise constant, a new node only changes the forward
+on its own segment, so each solve is one-dimensional and leaves the earlier instruments repriced. After the five pieces below were
+filled in, all 17 quotes reprice to within 5.3e-10 bp.
+
+\section*{2. The five pieces}
+\textbf{2a, 2b: annuity and par rate} (\code{ValuationEngineProductRfrSwap.calculate\_value}). The fixed leg pays $NK\alpha_i$ on each
+remaining coupon date $p_i$, so its PV already calculated by the leg engine is $V_{\mathrm{fix}}=NK\sum_i\alpha_iD(p_i)$ and the annuity
+per unit notional is $A=V_{\mathrm{fix}}/(NK)$; the coupon $K$ is the market quote for calibration instruments and nonzero in every
+use here. The par rate is the coupon that makes the swap worth zero, $R=V_{\mathrm{float}}/(NA)$. For the 9Y6M swap of Section 3,
+$A=7.5863$ and $R=4.8273\%$, so receiving $4.5\%$ is worth $(K-R)\,NA=$ USD -24,829.03, the number the notebook prints.
+
+\textbf{2c: par-rate gradient} (\code{grad\_at\_par}). With $K$ held fixed, $R=V_{\mathrm{float}}/(NA)$ and $NA=V_{\mathrm{fix}}/K$, so
+by the quotient rule
+\[
+\nabla_{X^I}R=\frac{\nabla_{X^I}V_{\mathrm{float}}}{NA}-R\,\frac{\nabla_{X^I}V_{\mathrm{fix}}}{V_{\mathrm{fix}}},
+\]
+where $X^I$ is the vector of internal state variables (the node forwards of every component, flattened in the model's component
+order). The two leg engines already know how to accumulate their PV gradients block by block, so the implementation calls each of
+them once with the matching scalar, which keeps the blocks aligned with the state layout.
+
+\textbf{3: calibration Jacobian} (\code{YieldCurve.calculate\_model\_jacobian}). $J=\partial X^M/\partial X^I$ has one row per
+calibration instrument: the OIS rows are the gradients from 2c, the funding row comes from the zero-spread engine, and each row is the
+flattened block list. Here $J$ is $18\times18$ (17 OIS nodes and one funding node). Its OIS block is lower triangular, because quote
+$i$ only depends on nodes up to its own maturity, with a positive diagonal: raising a swap's last-segment forward raises its par rate.
+
+\textbf{4: quote risk} (\code{risk\_calculation}). The engines give $\nabla_{X^I}V$. The market quotes are a function of the state,
+$X^M=F(X^I)$ with $J=\partial F/\partial X^I$ invertible, so a move $dX^M$ in quotes is produced by $dX^I=J^{-1}dX^M$ and the chain rule
+gives
+\[
+\nabla_{X^M}V=\nabla_{X^I}V\,J^{-1},
+\]
+which I compute by solving $J^{\top}r^{\top}=(\nabla_{X^I}V)^{\top}$ rather than forming the inverse. The values stay in decimal-rate
+units and the report multiplies by $10^{-4}$ to show USD per basis point.
+
+\textbf{Hedge.} With $B_{ij}$ the quote risk of one million receive-fixed par OIS $i$ to quote $j$ (a $17\times17$ matrix) and $r$ the
+target's OIS quote risk, the weights solve $B^{\top}w=-r^{\top}$; $w_i$ is the receive-fixed notional in millions, negative meaning pay
+fixed. Since $B$ is square and nonsingular the residual $r+w^{\top}B$ is zero to machine precision.
+
+\section*{3. Results and how to read them}
+\begin{center}\footnotesize
+\begin{tabular}{@{}lrrrr@{}}\toprule
+OIS & Quote (bp) & Target risk (USD/bp) & Par OIS own-quote risk (USD/bp) & Hedge notional (USD, receive $>0$) \\ \midrule
+1Y & 447.795 & 1.336 & -97.77 & 13,666 \\
+2Y & 465.672 & 0.382 & -189.91 & 2,011 \\
+3Y & 470.730 & 0.597 & -277.73 & 2,151 \\
+4Y & 472.032 & 1.038 & -361.78 & 2,870 \\
+5Y & 473.200 & 0.823 & -441.91 & 1,863 \\
+6Y & 474.988 & 1.766 & -519.13 & 3,403 \\
+7Y & 477.000 & 1.567 & -591.67 & 2,648 \\
+8Y & 479.203 & 3.531 & -660.73 & 5,345 \\
+9Y & 481.600 & -355.339 & -726.42 & -489,162 \\
+10Y & 484.300 & -401.432 & -789.18 & -508,671 \\
+12Y & 489.725 & 0.000 & -905.49 & -0 \\
+15Y & 496.507 & 0.000 & -1,057.51 & -0 \\
+20Y & 501.255 & 0.000 & -1,264.03 & -0 \\
+25Y & 498.939 & 0.000 & -1,425.45 & -0 \\
+30Y & 493.568 & 0.000 & -1,554.29 & -0 \\
+40Y & 480.540 & 0.000 & -1,747.51 & -0 \\
+50Y & 466.540 & 0.000 & -1,886.18 & -0 \\
+\bottomrule\end{tabular}\end{center}
+
+\textbf{Why the risk sits at 9Y and 10Y.} A receive-fixed swap loses when rates rise, so its risk to the quotes is negative, and it
+is concentrated in the two quotes whose forward segments carry the swap's last cashflows: -355.34 USD/bp at 9Y and -401.43 at 10Y.
+The bootstrap explains the shape. Raising the 9Y quote by one basis point with every other quote fixed lifts the forward on the
+8Y--9Y segment by 10.8 bp (one year has to carry the whole change of a nine-year average) and, since the 10Y swap must still
+reprice, lowers the 9Y--10Y segment by 11.3 bp. The 9Y6M swap pays floating on all of the first segment and on half of the
+second, so the two moves do not cancel and the swap loses about $10^6\times(\text{10.8}-\tfrac12\times\text{11.3})\,\text{bp}
+\times 10^{-4}$, discounted, which is the order of the -355.34 printed. Raising the 10Y quote lifts the 9Y--10Y segment by 12.3 bp
+and lowers the 10Y--12Y segment, which the swap never touches, hence -401.43. For a quote inside the swap's life, say 5Y, the
+segment it lifts (5.4 bp on 4Y--5Y) and the segment it lowers (5.7 bp on 5Y--6Y) are both fully paid by the swap, so the two
+effects cancel to first order and only a small positive residual from discounting is left (0.82 USD/bp); the quotes beyond 10Y
+cannot move the swap at all, so their risk is exactly zero.
+
+\textbf{The hedge.} The solver returns pay-fixed positions of USD 489,162 at 9Y and USD 508,671 at 10Y, together close to one million
+(997,833 in total, 49\% of it at 9Y, as a 9Y6M maturity sits about half way between the two nodes), plus small receive-fixed
+positions of a few thousand at 1Y to 8Y that absorb the residual risks, and nothing beyond 10Y. The own-quote risk of a one million
+par OIS equals $-NA\times10^{-4}$, its PV01, which is why the diagonal of $B$ grows with maturity (-97.77 at 1Y, -1,886.18 at 50Y). The
+hedge is first order: when I move the 9Y quote by a full basis point and recalibrate, the naked swap moves by USD -355.42 and the
+hedged book by USD -0.12 (for 10Y: -401.52 and -0.12), the leftover being convexity.
+
+\section*{4. Checks}
+\code{tests/test\_ois\_calibration\_and\_risk.py} has 18 tests: every calibration swap reprices to its quote and has zero PV;
+nodes at the last payment dates in maturity order; the annuity equals the hand sum of accrual times discount factor from the cashflow
+report; the par rate equals the floating PV over the annuity, prices the swap to zero, and does not depend on direction or notional;
+the reference PV; the par-rate gradient against central differences in the state and against the quotient rule of the two leg
+gradients; the Jacobian's shape, triangular structure and rows against finite differences of the quotes; the quote risk against the
+shipped reference, against the gradient times the explicit inverse, and against bump-and-recalibrate of the 1Y, 8Y, 9Y, 10Y and 12Y
+quotes; signs, locality and the pay/receive mirror; a par OIS's own-quote risk as its PV01 with zero risk elsewhere; the report labels;
+and the hedge (reference notionals, zero residual, the 9Y/10Y split, and a real one basis point move of the hedged book). The notebook
+is the professor's, executed top to bottom, and its tables equal the reference outputs he shipped in it.
+\end{document}

@@ -201,13 +201,12 @@ class ValuationEngineProductRfrSwap(ValuationEngineProduct):
         self.cash_ = (
             self.fixed_leg_sign_ * self.fixed_cash_ + self.floating_leg_sign_ * self.float_cash_
         )
-        # TODO 2a: Set self.annuity_ to the fixed-leg annuity per unit notional.
-        # Use the nonzero fixed coupon and the fixed-leg PV already calculated.
-        raise NotImplementedError("TODO 2a: calculate the fixed-leg annuity")
+        # 2a: the fixed leg pays N * K * alpha_i on each remaining coupon, so its PV divided by
+        # N * K is the annuity sum(alpha_i * D_i) per unit notional (the coupon K is nonzero).
+        self.annuity_ = self.fixed_value_ / (self.fixed_rate_ * self.notional_)
 
-        # TODO 2b: Set self.par_rate_or_spread_ to the OIS par rate in decimals.
-        # Use the floating-leg PV and the annuity from TODO 2a.
-        raise NotImplementedError("TODO 2b: calculate the OIS par rate")
+        # 2b: the par rate makes the fixed leg worth the floating leg: R = V_float / (N * A).
+        self.par_rate_or_spread_ = self.float_value_ / (self.notional_ * self.annuity_)
 
     def calculate_first_order_risk(
         self, gradient=None, scaler: float = 1.0, accumulate: bool = False
@@ -238,10 +237,18 @@ class ValuationEngineProductRfrSwap(ValuationEngineProduct):
         local_grad = []
         self.model_.resize_gradient(local_grad)
 
-        # TODO 2c: Accumulate the OIS par-rate gradient with respect to X^I
-        # in local_grad. Apply the quotient rule using both leg engines,
-        # keeping the fixed coupon constant and the model's component order.
-        raise NotImplementedError("TODO 2c: calculate the OIS par-rate gradient")
+        # 2c: R = V_float / (N A) with N A = V_fixed / K and K held fixed, so by the quotient rule
+        #     grad R = grad V_float / (N A) - R * grad V_fixed / V_fixed.
+        # Each leg engine accumulates its own PV gradient (in model component order) scaled by
+        # the matching factor, which keeps the blocks aligned with the model's state layout.
+        self.calculate_value()
+        annuity_pv = self.notional_ * self.annuity_
+        self.floating_leg_engine_.calculate_first_order_risk(
+            local_grad, scaler=1.0 / annuity_pv, accumulate=True
+        )
+        self.fixed_leg_engine_.calculate_first_order_risk(
+            local_grad, scaler=-self.par_rate_or_spread_ / self.fixed_value_, accumulate=True
+        )
 
         return local_grad
 

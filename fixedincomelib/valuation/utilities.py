@@ -48,10 +48,9 @@ def risk_calculation(engine : ValuationEngineProduct):
     gradient_flat = np.concatenate(gradient, axis=0) # dim : 1 x len(X^I)
     # step 2: get model (lazy) jacobian
     engine.model.calculate_model_jacobian()
-    # TODO 4: Set risk to the row gradient with respect to X^M, using
-    # gradient_flat and engine.model.model_jacobian as in the template.
-    # Keep raw decimal-rate units; report display applies the bp scaling.
-    raise NotImplementedError("TODO 4: transform internal risk to market-quote risk")
+    # step 3 and 4: dV/dX^M = dV/dX^I . J^{-1}; solving J^T r^T = (dV/dX^I)^T avoids forming J^{-1}.
+    # Raw decimal-rate units; the report display applies the bp scaling.
+    risk = np.linalg.solve(engine.model.model_jacobian.T, gradient_flat)
     # step 5: make a nice report
     risk_report = RiskReprt(engine.model.risk_postprocess(risk))
     return risk_report
